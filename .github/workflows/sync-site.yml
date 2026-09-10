@@ -1,0 +1,52 @@
+name: Sync to valdoh.com
+
+# This repo is the single source of truth for the calculator. On every push
+# to main that touches index.html, copy it verbatim into
+# iam-oov/valdoh.com-page/modalidad/index.html and push; that repo's own
+# deploy workflow then ships it to the server. valdoh.com-page deliberately
+# skips the @SHA@ footer stamp for /modalidad/ so the two copies stay
+# byte-identical.
+#
+# Required GitHub secret:
+#   VALDOH_SITE_DEPLOY_KEY - private half of a write deploy key on
+#                            iam-oov/valdoh.com-page. Deploy-key pushes count
+#                            as regular pushes, so they DO trigger that
+#                            repo's deploy workflow (a GITHUB_TOKEN push
+#                            would not).
+
+on:
+  push:
+    branches: [main]
+    paths: [index.html]
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Push index.html to valdoh.com-page/modalidad/
+        env:
+          DEPLOY_KEY: ${{ secrets.VALDOH_SITE_DEPLOY_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/id_site
+          chmod 600 ~/.ssh/id_site
+          export GIT_SSH_COMMAND="ssh -i ~/.ssh/id_site -o StrictHostKeyChecking=accept-new"
+
+          git clone --depth 1 git@github.com:iam-oov/valdoh.com-page.git site
+          SRC_SHA=$(git rev-parse --short HEAD)
+          cp index.html site/modalidad/index.html
+
+          cd site
+          if git diff --quiet; then
+            echo "modalidad/index.html already matches ${SRC_SHA}; nothing to sync"
+            exit 0
+          fi
+          git config user.name "sync-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git commit -am "chore: sync /modalidad/ from suegro-modalidad40@${SRC_SHA}"
+          git push origin main
+          echo "Synced ${SRC_SHA}; valdoh.com-page deploy takes it from here"
